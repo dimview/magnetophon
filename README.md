@@ -10,5 +10,3 @@ This script can provide notifications, for example,
 using https://github.com/alloy/terminal-notifier 
 or https://github.com/arvydas/blinkstick-client.
 
-// cd ~/Music/Radiowaves/audiofiles
-// nohup ~/bin/magnetophon >0.log 2>&1 &
