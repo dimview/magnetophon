@@ -137,7 +137,7 @@ static void HandleInputBuffer(
           pAqData->mCurrentPacket += inNumPackets;
           pAqData->mRecordingLength += (inBuffer->mAudioDataByteSize / sizeof(SInt16));
         }
-      } else if (pAqData->mState == radioWavesDuring) {
+      } else if (pAqData->mState == magnitophonRecording) {
         //printf("%d samples, RMS=%g, range=%d...%d, finished recording\n", count, rms, min, max);
         pAqData->mState = magnitophonDone;
         // Convert number of samples to seconds
@@ -320,29 +320,57 @@ int main(int argc, char* argv[])
     if (collect_statistics) {
       // Determine the hourly bucket statistics should go to
       // tm_wday is days since Sunday (0...6)
-      RunningStat* rsp = (tmp->tm_wday == 0 || tmp->tm_wday == 6 ? &stat.weekend[0] : &stat.weekday[0]);
+      RunningStat* rspa = (tmp->tm_wday == 0 || tmp->tm_wday == 6 ? &stat.weekend[0] : &stat.weekday[0]);
       // tm_hour is hours since midnight (0...23)
-      rsp += tmp->tm_hour;
+      rspa += tmp->tm_hour;
 
       // Apply exponential smoothing to business 
       int seconds_of_silence = (int)difftime(aqData.mRecordingStartTime, prev_tm);
-      printf("business update: %g -> %d seconds of silence", business, seconds_of_silence);
+      printf("business: %g, off %d, ", business, seconds_of_silence);
       while (seconds_of_silence --> 0) {
         business -= business * decay;
-        rsp->add_observation(business);
+        rspa->add_observation(business);
       }
       int seconds_of_activity = aqData.mRecordingLength;
-      printf(" -> %g -> %d seconds of activity", business, seconds_of_activity);
+      printf("%g, on %d, ", business, seconds_of_activity);
       while (seconds_of_activity --> 0) {
         business += (1 - business) * decay;
-        rsp->add_observation(business);
+        rspa->add_observation(business);
       }
-      printf(" -> %g\n", business);
-      printf("RunningStatMean=%g RunningStatStandardDeviation=%g\n", rsp->mean(), rsp->stdev());
+      printf("%g\n", business);
+      
+      RunningStat* rspb; // Neighbor bucket for interpolation of thresholds
+      double weight_a;
+      if (tmp->tm_min >= 30) { // neighbor bucket is the next one
+        if (tmp->tm_hour == 23) { // wrap to next day
+          // tm_wday is days since Sunday (0...6) so Friday is 5 and Saturday is 6
+          rspb = (tmp->tm_wday == 5 || tmp->tm_wday == 6 ? &stat.weekend[0] : &stat.weekday[0]);
+        } else {
+          rspb = rspa + 1;
+        }
+        weight_a = (90. - tmp->tm_min) / 60;
+      } else { // neighbor bucket is the previous one
+        if (tmp->tm_hour == 0) { // wrap to previous day
+          // tm_wday is days since Sunday (0...6) so Sunday is 0 and Monday is 1
+          rspb = (tmp->tm_wday == 0 || tmp->tm_wday == 1 ? &stat.weekend[23] : &stat.weekday[23]);
+        } else {
+          rspb = rspa - 1;
+        }
+        weight_a = (31. + tmp->tm_min) / 60;
+      }
+      double weight_b = 1. - weight_a;
+      double interpolated_mean = weight_a * rspa->mean() + weight_b * rspb->mean();
+      printf("interpolation: %g*%g+%g*%g=%g\n", weight_a, rspa->mean(), weight_b, rspb->mean(), interpolated_mean);
+      double interpolated_stdev = weight_a * rspa->stdev() + weight_b * rspb->stdev();
+      
+      printf( "thresholds: %g+%g=%g, %g+2*%g=%g\n"
+            , interpolated_mean, interpolated_stdev, interpolated_mean + interpolated_stdev
+            , interpolated_mean, interpolated_stdev, interpolated_mean + 2 * interpolated_stdev
+            );
     
       // business is at the highest, compare to thresholds
       if (!triggered) {
-        if (business > rsp->mean() + 2 * rsp->stdev()) {
+        if (business > interpolated_mean + 2 * interpolated_stdev) {
           triggered = true;
           if (system(NULL)) {
             char command[2048];
@@ -356,19 +384,18 @@ int main(int argc, char* argv[])
           }
         }
       } else {
-        if (business < rsp->mean() + rsp->stdev()) {
+        if (business < interpolated_mean + interpolated_stdev) {
           triggered = false;
         }
       }
       
       // From time to time, save statistics to a file
       if (++files_written_since_last_save > 10) {
-        printf("Saving stats\n");
         files_written_since_last_save = 0;
         FILE* f = fopen(stats_filename, "w");
         if (f) {
           if (fwrite(&stat, sizeof(BaselineBusinessCurve), 1, f) == 1) {
-            printf("Stats saved to %s\n", stats_filename);
+            printf("Saved stats in %s\n", stats_filename);
           } else {
             fprintf(stderr, "Can't write to %s\n", stats_filename);
           }
