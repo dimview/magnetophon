@@ -48,6 +48,11 @@ class RunningStat
       return sqrt(variance());
     }
 
+    int count(void) const
+    {
+      return n_;
+    }
+
   private:
     int n_;
     double m_;
@@ -77,6 +82,7 @@ struct AQRecorderState {
   int                          mState;
   time_t                       mRecordingStartTime;
   int                          mRecordingLength;
+  int                          mRmsThreshold;
 };
 
 // Audio recorder callback
@@ -96,14 +102,12 @@ static void HandleInputBuffer(
     inNumPackets = inBuffer->mAudioDataByteSize / pAqData->mDataFormat.mBytesPerPacket;
   }
   
-  double sum = 0;
-  int count = 0;
   int min = 0;
   int max = 0;
+  RunningStat stat;
   for (int i = 0; i < inBuffer->mAudioDataByteSize; i += sizeof(SInt16)) {
     SInt16 sample = *((SInt16*)((char*)inBuffer->mAudioData + i));
-    sum += sample * sample;
-    count++;
+    stat.add_observation(sample);
     if (i == 0) {
       min = max = sample;
     } else {
@@ -112,12 +116,12 @@ static void HandleInputBuffer(
     }
   }
   if (inBuffer->mAudioDataByteSize) {
-    double rms = sqrt(sum / count);
+    double rms = stat.stdev();
     if ( (pAqData->mState == magnitophonWaiting)
       || (pAqData->mState == magnitophonRecording)
        ) {
-      if (rms > 1000) {
-        //printf("%d samples, RMS=%g, range=%d...%d, ", count, rms, min, max);
+      if (rms > pAqData->mRmsThreshold) {
+        //printf("%d samples, RMS=%g, range=%d...%d, ", stat.count(), rms, min, max);
         if (pAqData->mState == magnitophonWaiting) {
           //printf("starting to record\n");
           pAqData->mState = magnitophonRecording;
@@ -179,22 +183,38 @@ static void DeriveBufferSize (
 int main(int argc, char* argv[])
 {
   double business = 0; // Estimate of channel busy cycle, 0 to 1
-  double decay = 1. / 600; // Exponential decay constant
-  struct BaselineBusinessCurve stat;
+  double decay = 1. / 100; // Exponential decay constant
+  int rms_threshold = 1000;
+  const char* stats_filename = "magnetophon.stats";
+  const char* buffer_filename  = "magnetophon.aif";
+  const char* csv_filename  = "magnetophon.csv";
   time_t prev_tm;
   time(&prev_tm);
   bool triggered = false;
   int files_written_since_last_save = 0;
-  const char* stats_filename = "magnetophon.stats";
-  const char* buffer_filename  = "magnetophon.aif";
-  const char* csv_filename  = "magnetophon.csv";
-  bool collect_statistics = false;
+  
+  if (argc >= 2) {
+    int decay_constant_denominator = atoi(argv[1]);
+    if (decay_constant_denominator > 0) {
+      decay = 1. / decay_constant_denominator;
+    } else {
+      fprintf(stderr, "Unexpected decay constant: %s\n", argv[1]);
+    }
+  }
+  if (argc >= 3) {
+    int rms = atoi(argv[2]);
+    if (rms > 0) {
+      rms_threshold = rms;
+    } else {
+      fprintf(stderr, "Unexpected RMS threshold: %s\n", argv[2]);
+    }
+  }
   
   // Read old statistics if available
+  struct BaselineBusinessCurve stat;
   {
     FILE* f = fopen(stats_filename, "r");
     if (f) {
-      collect_statistics = true;
       if (fread(&stat, sizeof(BaselineBusinessCurve), 1, f) == 1) {
         printf("hour,weekday_mean,weekday_stdev,weekend_mean,weekend_stdev\n");
         for (int h = 0; h < 24; h++) {
@@ -238,7 +258,7 @@ int main(int argc, char* argv[])
     aqData.mDataFormat.mBytesPerPacket   = 
     aqData.mDataFormat.mBytesPerFrame    = aqData.mDataFormat.mChannelsPerFrame * sizeof (SInt16);
     aqData.mDataFormat.mFramesPerPacket  = 1;
- 
+    aqData.mRmsThreshold                 = rms_threshold;
     AudioFileTypeID fileType             = kAudioFileAIFFType;
     aqData.mDataFormat.mFormatFlags      = kAudioFormatFlagIsBigEndian 
                                          | kAudioFormatFlagIsSignedInteger
@@ -332,7 +352,8 @@ int main(int argc, char* argv[])
       } 
     }
 
-    if (collect_statistics) {
+    // Collect statistics
+    {
       // Determine the hourly bucket statistics should go to
       // tm_wday is days since Sunday (0...6)
       RunningStat* rspa = (tmp->tm_wday == 0 || tmp->tm_wday == 6 ? &stat.weekend[0] : &stat.weekday[0]);
