@@ -116,12 +116,11 @@ static void HandleInputBuffer(
     }
   }
   if (inBuffer->mAudioDataByteSize) {
-    double rms = stat.stdev();
     if ( (pAqData->mState == magnitophonWaiting)
       || (pAqData->mState == magnitophonRecording)
        ) {
-      if (rms > pAqData->mRmsThreshold) {
-        //printf("%d samples, RMS=%g, range=%d...%d, ", stat.count(), rms, min, max);
+      if (stat.stdev() > pAqData->mRmsThreshold) {
+        //printf("%d samples, RMS=%g, range=%d...%d, ", stat.count(), stat.stdev(), min, max);
         if (pAqData->mState == magnitophonWaiting) {
           //printf("starting to record\n");
           pAqData->mState = magnitophonRecording;
@@ -142,15 +141,15 @@ static void HandleInputBuffer(
           pAqData->mRecordingLength += (inBuffer->mAudioDataByteSize / sizeof(SInt16));
         }
       } else if (pAqData->mState == magnitophonRecording) {
-        //printf("%d samples, RMS=%g, range=%d...%d, finished recording\n", count, rms, min, max);
+        //printf("%d samples, RMS=%g, range=%d...%d, finished recording\n", stat.count(), stat.stdev(), min, max);
         pAqData->mState = magnitophonDone;
         // Convert number of samples to seconds
         pAqData->mRecordingLength /= (int)pAqData->mDataFormat.mSampleRate;
       } else {
-        //printf("%d samples, RMS=%g, range=%d...%d, waiting\n", count, rms, min, max);
+        //printf("%d samples, RMS=%g, range=%d...%d, waiting\n", stat.count(), stat.stdev(), min, max);
       }
     } else {
-      //printf("%d samples, RMS=%g, range=%d...%d, ignoring tail\n", count, rms, min, max);
+      //printf("%d samples, RMS=%g, range=%d...%d, ignoring tail\n", stat.count(), stat.stdev(), min, max);
     }
   }
   if (pAqData->mState == magnitophonDone) return;
@@ -360,21 +359,9 @@ int main(int argc, char* argv[])
       // tm_hour is hours since midnight (0...23)
       rspa += tmp->tm_hour;
 
-      // Apply exponential smoothing to business 
       int seconds_of_silence = (int)difftime(aqData.mRecordingStartTime, prev_tm);
-      printf("business: %g, off %d, ", business, seconds_of_silence);
-      while (seconds_of_silence --> 0) {
-        business -= business * decay;
-        rspa->add_observation(business);
-      }
       int seconds_of_activity = aqData.mRecordingLength;
-      printf("%g, on %d, ", business, seconds_of_activity);
-      while (seconds_of_activity --> 0) {
-        business += (1 - business) * decay;
-        rspa->add_observation(business);
-      }
-      printf("%g\n", business);
-      
+
       // Save activity to CSV for future analysis
       {
         FILE* f = fopen(csv_filename, "a");
@@ -384,6 +371,19 @@ int main(int argc, char* argv[])
           fclose(f);
         }
       }
+
+      // Apply exponential smoothing to business 
+      printf("business: %g, off %d, ", business, seconds_of_silence);
+      while (seconds_of_silence --> 0) {
+        business -= business * decay;
+        rspa->add_observation(business);
+      }
+      printf("%g, on %d, ", business, seconds_of_activity);
+      while (seconds_of_activity --> 0) {
+        business += (1 - business) * decay;
+        rspa->add_observation(business);
+      }
+      printf("%g\n", business);
       
       RunningStat* rspb; // Neighbor bucket for interpolation of thresholds
       double weight_a;
