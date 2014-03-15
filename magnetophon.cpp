@@ -240,7 +240,7 @@ int main(int argc, char* argv[])
     } else {
       f = fopen(csv_filename, "w");
       if (f) {
-        fprintf(f, "datetime,seconds_off,seconds_on\n");
+        fprintf(f, "datetime,seconds_off,seconds_on,business,interpolated_mean,interpolated_stdev,triggered\n");
         fclose(f);
       }
     }
@@ -362,24 +362,14 @@ int main(int argc, char* argv[])
       int seconds_of_silence = (int)difftime(aqData.mRecordingStartTime, prev_tm);
       int seconds_of_activity = aqData.mRecordingLength;
 
-      // Save activity to CSV for future analysis
-      {
-        FILE* f = fopen(csv_filename, "a");
-        if (f) {
-          fileName[19] = '\0'; // cut off ".aiff"
-          fprintf(f, "%s,%d,%d\n", fileName, seconds_of_silence, seconds_of_activity);
-          fclose(f);
-        }
-      }
-
       // Apply exponential smoothing to business 
       printf("business: %g, off %d, ", business, seconds_of_silence);
-      while (seconds_of_silence --> 0) {
+      for (int i = 0; i < seconds_of_silence; i++) {
         business -= business * decay;
         rspa->add_observation(business);
       }
       printf("%g, on %d, ", business, seconds_of_activity);
-      while (seconds_of_activity --> 0) {
+      for (int i = 0; i < seconds_of_activity; i++) {
         business += (1 - business) * decay;
         rspa->add_observation(business);
       }
@@ -435,6 +425,21 @@ int main(int argc, char* argv[])
         }
       }
       
+      // Save activity to CSV for future analysis
+      {
+        FILE* f = fopen(csv_filename, "a");
+        if (f) {
+          fileName[19] = '\0'; // cut off ".aiff"
+          fprintf( f, "%s,%d,%d,%g,%g,%g,%d\n"
+                 , fileName, seconds_of_silence, seconds_of_activity
+                 , business
+                 , interpolated_mean, interpolated_stdev
+                 , triggered ? 1 : 0
+                 );
+          fclose(f);
+        }
+      }
+
       // From time to time, save statistics to a file
       if (++files_written_since_last_save > 10) {
         files_written_since_last_save = 0;
