@@ -187,6 +187,7 @@ int main(int argc, char* argv[])
   int files_written_since_last_save = 0;
   const char* stats_filename = "magnetophon.stats";
   const char* buffer_filename  = "magnetophon.aif";
+  const char* csv_filename  = "magnetophon.csv";
   bool collect_statistics = false;
   
   // Read old statistics if available
@@ -209,6 +210,20 @@ int main(int argc, char* argv[])
         fprintf(stderr, "Can't read %s\n", stats_filename);    
       }
       fclose(f);
+    }
+  }
+
+  // Create empty CSV if it does not yet exist
+  {
+    FILE* f = fopen(csv_filename, "r");
+    if (f) {
+      fclose(f);
+    } else {
+      f = fopen(csv_filename, "w");
+      if (f) {
+        fprintf(f, "datetime,seconds_off,seconds_on\n");
+        fclose(f);
+      }
     }
   }
 
@@ -338,6 +353,16 @@ int main(int argc, char* argv[])
         rspa->add_observation(business);
       }
       printf("%g\n", business);
+      
+      // Save activity to CSV for future analysis
+      {
+        FILE* f = fopen(csv_filename, "a");
+        if (f) {
+          fileName[19] = '\0'; // cut off ".aiff"
+          fprintf(f, "%s,%d,%d\n", fileName, seconds_of_silence, seconds_of_activity);
+          fclose(f);
+        }
+      }
       
       RunningStat* rspb; // Neighbor bucket for interpolation of thresholds
       double weight_a;
