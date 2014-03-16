@@ -187,8 +187,11 @@ int main(int argc, char* argv[])
   const char* stats_filename = "magnetophon.stats";
   const char* buffer_filename  = "magnetophon.aif";
   const char* csv_filename  = "magnetophon.csv";
+  const char* stats_csv_filename = "magnetophon.stats.csv";
   time_t prev_tm;
   time(&prev_tm);
+  time_t stats_csv_tm; 
+  time(&stats_csv_tm); 
   bool triggered = false;
   int files_written_since_last_save = 0;
   
@@ -214,18 +217,7 @@ int main(int argc, char* argv[])
   {
     FILE* f = fopen(stats_filename, "r");
     if (f) {
-      if (fread(&stat, sizeof(BaselineBusinessCurve), 1, f) == 1) {
-        printf("hour,weekday_mean,weekday_stdev,weekend_mean,weekend_stdev\n");
-        for (int h = 0; h < 24; h++) {
-          printf( "%d,%g,%g,%g,%g\n"
-                , h
-                , stat.weekday[h].mean()
-                , stat.weekday[h].stdev()
-                , stat.weekend[h].mean()
-                , stat.weekend[h].stdev()
-                );
-        }     
-      } else {
+      if (fread(&stat, sizeof(BaselineBusinessCurve), 1, f) != 1) {
         fprintf(stderr, "Can't read %s\n", stats_filename);    
       }
       fclose(f);
@@ -349,6 +341,7 @@ int main(int argc, char* argv[])
       if (rename(buffer_filename, fileName)) {
         fprintf(stderr, "Can't rename %s to %s\n", buffer_filename, fileName);
       } 
+      fileName[19] = '\0'; // cut off ".aiff"
     }
 
     // Collect statistics
@@ -363,7 +356,7 @@ int main(int argc, char* argv[])
       int seconds_of_activity = aqData.mRecordingLength;
 
       // Apply exponential smoothing to business 
-      printf("business: %g, off %d, ", business, seconds_of_silence);
+      printf("%s: %g, off %d, ", fileName, business, seconds_of_silence);
       for (int i = 0; i < seconds_of_silence; i++) {
         business -= business * decay;
         rspa->add_observation(business);
@@ -396,13 +389,13 @@ int main(int argc, char* argv[])
       }
       double weight_b = 1. - weight_a;
       double interpolated_mean = weight_a * rspa->mean() + weight_b * rspb->mean();
-      printf("interpolation: %g*%g+%g*%g=%g\n", weight_a, rspa->mean(), weight_b, rspb->mean(), interpolated_mean);
+      //printf("interpolation: %g*%g+%g*%g=%g\n", weight_a, rspa->mean(), weight_b, rspb->mean(), interpolated_mean);
       double interpolated_stdev = weight_a * rspa->stdev() + weight_b * rspb->stdev();
       
-      printf( "thresholds: %g+%g=%g, %g+2*%g=%g\n"
-            , interpolated_mean, interpolated_stdev, interpolated_mean + interpolated_stdev
-            , interpolated_mean, interpolated_stdev, interpolated_mean + 2 * interpolated_stdev
-            );
+      //printf( "thresholds: %g+%g=%g, %g+2*%g=%g\n"
+      //      , interpolated_mean, interpolated_stdev, interpolated_mean + interpolated_stdev
+      //      , interpolated_mean, interpolated_stdev, interpolated_mean + 2 * interpolated_stdev
+      //      );
     
       // business is at the highest, compare to thresholds
       if (!triggered) {
@@ -411,12 +404,13 @@ int main(int argc, char* argv[])
           if (system(NULL)) {
             char command[2048];
             // Notification script has the same name as this binary, but with .command suffix
-            snprintf(command, sizeof(command), "%s.command %s", argv[0], fileName);
-            printf("Executing %s\n", command);
-            int ret = system(command);
-            printf("Return code %d\n", ret);
+            snprintf(command, sizeof(command), "%s.command %s.aiff", argv[0], fileName);
+            //printf("Executing %s\n", command);
+            //int ret = 
+            system(command);
+            //printf("Return code %d\n", ret);
           } else {
-            printf("Can't send notification\n");
+            fprintf(stderr, "Can't send notification\n");
           }
         }
       } else {
@@ -424,12 +418,11 @@ int main(int argc, char* argv[])
           triggered = false;
         }
       }
-      
+
       // Save activity to CSV for future analysis
       {
         FILE* f = fopen(csv_filename, "a");
         if (f) {
-          fileName[19] = '\0'; // cut off ".aiff"
           fprintf( f, "%s,%d,%d,%g,%g,%g,%d\n"
                  , fileName, seconds_of_silence, seconds_of_activity
                  , business
@@ -446,13 +439,45 @@ int main(int argc, char* argv[])
         FILE* f = fopen(stats_filename, "w");
         if (f) {
           if (fwrite(&stat, sizeof(BaselineBusinessCurve), 1, f) == 1) {
-            printf("Saved stats in %s\n", stats_filename);
+            //printf("Saved stats in %s\n", stats_filename);
           } else {
             fprintf(stderr, "Can't write to %s\n", stats_filename);
           }
           fclose(f);
         } else {
           fprintf(stderr, "Can't open %s\n", stats_filename);
+        }
+      }
+
+      // Once per day, append statistics to a CSV for future analysis      
+      if (localtime(&stats_csv_tm)->tm_mday != tmp->tm_mday) {
+        time(&stats_csv_tm); 
+
+        // Create empty CSV if it does not yet exist
+        FILE* f = fopen(stats_csv_filename, "r");
+        if (f) {
+          fclose(f);
+        } else {
+          f = fopen(stats_csv_filename, "w");
+          if (f) {
+            fprintf(f, "datetime,hour,weekday_count,weekday_mean,weekday_stdev,weekend_count,weekend_mean,weekend_stdev\n");
+            fclose(f);
+          }
+        }
+        f = fopen(stats_csv_filename, "a");
+        if (f) {
+          for (int h = 0; h < 24; h++) {
+            fprintf( f, "%s,%d,%d,%g,%g,%d,%g,%g\n"
+                   , fileName
+                   , h
+                   , stat.weekday[h].count()
+                   , stat.weekday[h].mean()
+                   , stat.weekday[h].stdev()
+                   , stat.weekend[h].count()
+                   , stat.weekend[h].mean()
+                   , stat.weekend[h].stdev()
+                   );
+          }
         }
       }
       
