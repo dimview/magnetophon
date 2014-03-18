@@ -1,9 +1,11 @@
 // magnetophon.cpp
 //
+// Command-line audio recorder for Mac OS X
+//
 // Records audio (above some volume threshold) into time-stamped files in current folder.
-// Collects statistics about historical usage in magnetophon.stats.
-// Once per day appends statistics to magnetophon.stats.csv.
+// Persists statistics about historical usage in binary file magnetophon.stats.
 // Launches magnetophon.command when usage is unusually high.
+// Keeps track of variables used to make decisions in magnetophon.csv.
 //
 // Dm. Mayorov
 //
@@ -394,7 +396,11 @@ int main(int argc, char* argv[])
       }
       double weight_b = 1. - weight_a;
       double interpolated_mean, interpolated_stdev;
-      if (!rspb->count()) { // No reliable stats yet, use overall as fallback
+      if (rspa->count() > 3600 && rspb->count() > 3600) { 
+        interpolated_mean = weight_a * rspa->mean() + weight_b * rspb->mean();
+        //printf("interpolation: %g*%g+%g*%g=%g\n", weight_a, rspa->mean(), weight_b, rspb->mean(), interpolated_mean);
+        interpolated_stdev = weight_a * rspa->stdev() + weight_b * rspb->stdev();
+      } else { // No reliable stats yet, use overall as fallback
         if (overall_stat.count() > 3600) {
           interpolated_mean = overall_stat.mean();
           interpolated_stdev = overall_stat.stdev();
@@ -403,10 +409,6 @@ int main(int argc, char* argv[])
           interpolated_mean = 1;
           interpolated_stdev = 1;
         }
-      } else {
-        interpolated_mean = weight_a * rspa->mean() + weight_b * rspb->mean();
-        //printf("interpolation: %g*%g+%g*%g=%g\n", weight_a, rspa->mean(), weight_b, rspb->mean(), interpolated_mean);
-        interpolated_stdev = weight_a * rspa->stdev() + weight_b * rspb->stdev();
       }
       
       //printf( "thresholds: %g+%g=%g, %g+2*%g=%g\n"

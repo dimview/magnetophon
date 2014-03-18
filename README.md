@@ -25,8 +25,8 @@ decay is time constant used in exponential decay, default 100.
 ## Notification Algorithm
 
 magnetophon maintains running estimate of duty cycle using exponential smoothing.
-Smoothing factor is by default set to 1/100 s-1, so it takes approximately 300 seconds
-of uninterrupted audio to bring duty cycle estimate from 0 to approximately 0.95.
+Smoothing factor is by default set to 1/100 s<sup>-1</sup>, so it takes approximately
+300 seconds of uninterrupted audio to bring duty cycle estimate from 0 to 0.95.
 If average transmission lengths are much longer or much shorter, time constant
 (reciprocal of smoothing factor) can be specified in command line.
 
@@ -35,9 +35,16 @@ and standard deviation of duty cycle estimate are stored in hourly buckets, sepa
 for weekdays and weekends (local time). This data is persisted in file magnetophon.stats
 in current folder so that it survives magnetophon restart.
 
-magnetophon estimates expected mean and standard deviation by interpolating hourly 
-historical baseline data. If duty cycle estimate is above expected mean plus two 
+magnetophon estimates expected mean and standard deviation of duty cycle by interpolating 
+hourly historical baseline. If duty cycle estimate is above expected mean plus two 
 expected standard deviations, a notification is triggered. Future notifications are 
 suppressed until duty cycle estimate falls below expected mean plus one expected 
 standard deviation.
 
+If less than one hour worth of data is available for both ends of interpolation interval,
+overall mean and standard deviation are used instead, except during first hour when
+notifications are suppressed.
+
+magnetophon maintains CSV file magnetophon.csv in current folder. This file contains 
+one line per audio file with values of variables that went into decision whether to 
+trigger notification.
