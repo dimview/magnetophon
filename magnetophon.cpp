@@ -1,9 +1,11 @@
 // magnetophon.cpp
 //
-// Record audio (above some volume threshold) into time-stamped files in current folder.
+// Records audio (above some volume threshold) into time-stamped files in current folder.
+// Collects statistics about historical usage in magnetophon.stats.
+// Once per day appends statistics to magnetophon.stats.csv.
+// Launches magnetophon.command when usage is unusually high.
 //
-// Optionally collect statistics about historical usage in magnetophon.stats, and
-// launch magnetophon.command when usage is unusually high.
+// Dm. Mayorov
 //
 #include <CoreAudio/CoreAudioTypes.h>
 #include <AudioToolbox/AudioFile.h>
@@ -194,21 +196,22 @@ int main(int argc, char* argv[])
   time(&stats_csv_tm); 
   bool triggered = false;
   int files_written_since_last_save = 0;
+  RunningStat overall_stat;
   
   if (argc >= 2) {
-    int decay_constant_denominator = atoi(argv[1]);
-    if (decay_constant_denominator > 0) {
-      decay = 1. / decay_constant_denominator;
-    } else {
-      fprintf(stderr, "Unexpected decay constant: %s\n", argv[1]);
-    }
-  }
-  if (argc >= 3) {
-    int rms = atoi(argv[2]);
+    int rms = atoi(argv[1]);
     if (rms > 0) {
       rms_threshold = rms;
     } else {
-      fprintf(stderr, "Unexpected RMS threshold: %s\n", argv[2]);
+      fprintf(stderr, "Unexpected RMS threshold: %s\n", argv[1]);
+    }
+  }
+  if (argc >= 3) {
+    int decay_constant_denominator = atoi(argv[2]);
+    if (decay_constant_denominator > 0) {
+      decay = 1. / decay_constant_denominator;
+    } else {
+      fprintf(stderr, "Unexpected decay constant: %s\n", argv[2]);
     }
   }
   
@@ -356,17 +359,19 @@ int main(int argc, char* argv[])
       int seconds_of_activity = aqData.mRecordingLength;
 
       // Apply exponential smoothing to business 
-      printf("%s: %g, off %d, ", fileName, business, seconds_of_silence);
+      //printf("%s: %g, off %d, ", fileName, business, seconds_of_silence);
       for (int i = 0; i < seconds_of_silence; i++) {
         business -= business * decay;
         rspa->add_observation(business);
+        overall_stat.add_observation(business);
       }
-      printf("%g, on %d, ", business, seconds_of_activity);
+      //printf("%g, on %d, ", business, seconds_of_activity);
       for (int i = 0; i < seconds_of_activity; i++) {
         business += (1 - business) * decay;
         rspa->add_observation(business);
+        overall_stat.add_observation(business);
       }
-      printf("%g\n", business);
+      //printf("%g\n", business);
       
       RunningStat* rspb; // Neighbor bucket for interpolation of thresholds
       double weight_a;
@@ -388,9 +393,21 @@ int main(int argc, char* argv[])
         weight_a = (31. + tmp->tm_min) / 60;
       }
       double weight_b = 1. - weight_a;
-      double interpolated_mean = weight_a * rspa->mean() + weight_b * rspb->mean();
-      //printf("interpolation: %g*%g+%g*%g=%g\n", weight_a, rspa->mean(), weight_b, rspb->mean(), interpolated_mean);
-      double interpolated_stdev = weight_a * rspa->stdev() + weight_b * rspb->stdev();
+      double interpolated_mean, interpolated_stdev;
+      if (!rspb->count()) { // No reliable stats yet, use overall as fallback
+        if (overall_stat.count() > 3600) {
+          interpolated_mean = overall_stat.mean();
+          interpolated_stdev = overall_stat.stdev();
+        } else { // Less than an hour of overall data
+          // Set artificially high expectation to suppress notifications
+          interpolated_mean = 1;
+          interpolated_stdev = 1;
+        }
+      } else {
+        interpolated_mean = weight_a * rspa->mean() + weight_b * rspb->mean();
+        //printf("interpolation: %g*%g+%g*%g=%g\n", weight_a, rspa->mean(), weight_b, rspb->mean(), interpolated_mean);
+        interpolated_stdev = weight_a * rspa->stdev() + weight_b * rspb->stdev();
+      }
       
       //printf( "thresholds: %g+%g=%g, %g+2*%g=%g\n"
       //      , interpolated_mean, interpolated_stdev, interpolated_mean + interpolated_stdev
