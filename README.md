@@ -20,13 +20,13 @@ $ nohup [[rms] decay] >magnetophone.log 2>&1 &
 
 rms is RMS threshold, default 1000. Audio samples are 16 bit signed integers. 
 
-decay is time constant used in exponential decay, default 100. 
+decay is time constant used in exponential decay, default 600. 
 
 ## Notification Algorithm
 
 magnetophon maintains running estimate of duty cycle using exponential smoothing.
-Smoothing factor is by default set to 1/100 s<sup>-1</sup>, so it takes approximately
-300 seconds of uninterrupted audio to bring duty cycle estimate from 0 to 0.95.
+Smoothing factor is by default set to 1/600 s<sup>-1</sup>, so it takes approximately
+half an hour of uninterrupted audio to bring duty cycle estimate from 0 to 0.95.
 If average transmission lengths are much longer or much shorter, time constant
 (reciprocal of smoothing factor) can be specified in command line.
 
@@ -36,7 +36,7 @@ for weekdays and weekends (local time). This data is persisted in file magnetoph
 in current folder so that it survives magnetophon restart.
 
 magnetophon estimates expected mean and standard deviation of duty cycle by interpolating 
-hourly historical baseline. If duty cycle estimate is above expected mean plus two 
+hourly historical baseline. If duty cycle estimate is above expected mean plus three 
 expected standard deviations, a notification is triggered. Future notifications are 
 suppressed until duty cycle estimate falls below expected mean plus one expected 
 standard deviation.

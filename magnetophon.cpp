@@ -186,7 +186,7 @@ static void DeriveBufferSize (
 int main(int argc, char* argv[])
 {
   double business = 0; // Estimate of channel busy cycle, 0 to 1
-  double decay = 1. / 100; // Exponential decay constant
+  double decay = 1. / 600; // Exponential decay constant
   int rms_threshold = 1000;
   const char* stats_filename = "magnetophon.stats";
   const char* buffer_filename  = "magnetophon.aif";
@@ -237,7 +237,7 @@ int main(int argc, char* argv[])
     } else {
       f = fopen(csv_filename, "w");
       if (f) {
-        fprintf(f, "datetime,seconds_off,seconds_on,business,interpolated_mean,interpolated_stdev,triggered\n");
+        fprintf(f, "datetime,seconds_off,seconds_on,business,interpolated_mean,interpolated_stdev,triggered,a_mean,b_mean,o_mean\n");
         fclose(f);
       }
     }
@@ -418,7 +418,7 @@ int main(int argc, char* argv[])
     
       // business is at the highest, compare to thresholds
       if (!triggered) {
-        if (business > interpolated_mean + 2 * interpolated_stdev) {
+        if (business > interpolated_mean + 3 * interpolated_stdev) {
           triggered = true;
           if (system(NULL)) {
             char command[2048];
@@ -442,11 +442,14 @@ int main(int argc, char* argv[])
       {
         FILE* f = fopen(csv_filename, "a");
         if (f) {
-          fprintf( f, "%s,%d,%d,%g,%g,%g,%d\n"
+          fprintf( f, "%s,%d,%d,%g,%g,%g,%d,%g,%g,%g\n"
                  , fileName, seconds_of_silence, seconds_of_activity
                  , business
                  , interpolated_mean, interpolated_stdev
                  , triggered ? 1 : 0
+                 , rspa->mean()
+                 , rspb->mean()
+                 , overall_stat.mean()
                  );
           fclose(f);
         }
