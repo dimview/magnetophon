@@ -24,7 +24,7 @@ class RunningStat
   public:
     RunningStat() : n_(0) {}
     
-    void add_observation(double x)
+    void push(double x)
     {
       if (!n_++) {
         m_ = x;
@@ -62,6 +62,40 @@ class RunningStat
     double m_;
     double s_;
 };
+
+// Approximate cumulative density function of a standard normal random variable
+double standard_normal_cdf(double x)
+{
+    const double a1 =  0.254829592;
+    const double a2 = -0.284496736;
+    const double a3 =  1.421413741;
+    const double a4 = -1.453152027;
+    const double a5 =  1.061405429;
+    const double p  =  0.3275911;
+
+    int sign = (x < 0) ? -1 : 1;
+    x = fabs(x) / sqrt(2.0);
+
+    // Abramowitz and Stegun formula 7.1.26
+    double t = 1 / (1 + p * x);
+    double y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * exp(-x * x);
+
+    return 0.5 * (1 + sign * y);
+}
+
+// Approximate inverse cumulative density function of a standard normal random variable
+double standard_normal_inverse_cdf(double p)
+{
+  if (p <= 0 || p >= 1) return 0;
+  
+  double t = sqrt(-2 * log((p < 0.5) ? p : 1 - p));
+    
+  // Abramowitz and Stegun formula 26.2.23
+  double rational_approximation = t - ((0.010328 * t + 0.802853) * t + 2.515517) / 
+    (((0.001308 * t + 0.189269) * t + 1.432788) * t + 1);
+  
+  return (p < 0.5) ? -rational_approximation : rational_approximation;
+}
 
 // Break down usage statistics in hourly buckets, separate weekdays and weekends
 struct BaselineBusinessCurve {
@@ -111,7 +145,7 @@ static void HandleInputBuffer(
   RunningStat stat;
   for (int i = 0; i < inBuffer->mAudioDataByteSize; i += sizeof(SInt16)) {
     SInt16 sample = *((SInt16*)((char*)inBuffer->mAudioData + i));
-    stat.add_observation(sample);
+    stat.push(sample);
     if (i == 0) {
       min = max = sample;
     } else {
@@ -186,6 +220,7 @@ static void DeriveBufferSize (
 int main(int argc, char* argv[])
 {
   double business = 0; // Estimate of channel busy cycle, 0 to 1
+  int hours_between_notifications = 24 * 7; // On average, one notification per week
   double decay = 1. / 600; // Exponential decay constant
   int rms_threshold = 1000;
   const char* stats_filename = "magnetophon.stats";
@@ -199,21 +234,30 @@ int main(int argc, char* argv[])
   bool triggered = false;
   int files_written_since_last_save = 0;
   RunningStat overall_stat;
+  int overall_events = 0;
   
   if (argc >= 2) {
-    int rms = atoi(argv[1]);
-    if (rms > 0) {
-      rms_threshold = rms;
+    int a = atoi(argv[1]);
+    if (a > 0) {
+      hours_between_notifications = a;
     } else {
-      fprintf(stderr, "Unexpected RMS threshold: %s\n", argv[1]);
+      fprintf(stderr, "Unexpected hours between notifications: %s\n", argv[1]);
     }
   }
   if (argc >= 3) {
-    int decay_constant_denominator = atoi(argv[2]);
-    if (decay_constant_denominator > 0) {
-      decay = 1. / decay_constant_denominator;
+    int a = atoi(argv[2]);
+    if (a > 0) {
+      rms_threshold = a;
     } else {
-      fprintf(stderr, "Unexpected decay constant: %s\n", argv[2]);
+      fprintf(stderr, "Unexpected RMS threshold: %s\n", argv[2]);
+    }
+  }
+  if (argc >= 4) {
+    int a = atoi(argv[3]);
+    if (a > 0) {
+      decay = 1. / a;
+    } else {
+      fprintf(stderr, "Unexpected decay constant: %s\n", argv[3]);
     }
   }
   
@@ -237,7 +281,7 @@ int main(int argc, char* argv[])
     } else {
       f = fopen(csv_filename, "w");
       if (f) {
-        fprintf(f, "datetime,seconds_off,seconds_on,business,interpolated_mean,interpolated_stdev,triggered,a_mean,b_mean,o_mean\n");
+        fprintf(f, "datetime,seconds_off,seconds_on,business,interpolated_mean,interpolated_stdev,triggered,a_mean,b_mean,o_mean,threshold\n");
         fclose(f);
       }
     }
@@ -351,6 +395,8 @@ int main(int argc, char* argv[])
 
     // Collect statistics
     {
+      overall_events++;
+    
       // Determine the hourly bucket statistics should go to
       // tm_wday is days since Sunday (0...6)
       RunningStat* rspa = (tmp->tm_wday == 0 || tmp->tm_wday == 6 ? &stat.weekend[0] : &stat.weekday[0]);
@@ -364,14 +410,14 @@ int main(int argc, char* argv[])
       //printf("%s: %g, off %d, ", fileName, business, seconds_of_silence);
       for (int i = 0; i < seconds_of_silence; i++) {
         business -= business * decay;
-        rspa->add_observation(business);
-        overall_stat.add_observation(business);
+        rspa->push(business);
+        overall_stat.push(business);
       }
       //printf("%g, on %d, ", business, seconds_of_activity);
       for (int i = 0; i < seconds_of_activity; i++) {
         business += (1 - business) * decay;
-        rspa->add_observation(business);
-        overall_stat.add_observation(business);
+        rspa->push(business);
+        overall_stat.push(business);
       }
       //printf("%g\n", business);
       
@@ -411,14 +457,17 @@ int main(int argc, char* argv[])
         }
       }
       
-      //printf( "thresholds: %g+%g=%g, %g+2*%g=%g\n"
-      //      , interpolated_mean, interpolated_stdev, interpolated_mean + interpolated_stdev
-      //      , interpolated_mean, interpolated_stdev, interpolated_mean + 2 * interpolated_stdev
-      //      );
-    
       // business is at the highest, compare to thresholds
+      double threshold = 1;
       if (!triggered) {
-        if (business > interpolated_mean + 3 * interpolated_stdev) {
+        double hours = overall_stat.count() / 3600.;
+        double p = hours / (overall_events * hours_between_notifications);
+        threshold = interpolated_mean + standard_normal_inverse_cdf(1 - p) * interpolated_stdev;
+//        printf( "hours=%g events=%d p=%g 1-p=%g invcdf=%g mean=%g stdev=%g threshold=%g\n"
+//              , hours, overall_events, p, 1-p, standard_normal_inverse_cdf(1 - p)
+//              , interpolated_mean, interpolated_stdev, threshold
+//              );
+        if (business > threshold) {
           triggered = true;
           if (system(NULL)) {
             char command[2048];
@@ -442,7 +491,7 @@ int main(int argc, char* argv[])
       {
         FILE* f = fopen(csv_filename, "a");
         if (f) {
-          fprintf( f, "%s,%d,%d,%g,%g,%g,%d,%g,%g,%g\n"
+          fprintf( f, "%s,%d,%d,%g,%g,%g,%d,%g,%g,%g,%g\n"
                  , fileName, seconds_of_silence, seconds_of_activity
                  , business
                  , interpolated_mean, interpolated_stdev
@@ -450,6 +499,7 @@ int main(int argc, char* argv[])
                  , rspa->mean()
                  , rspb->mean()
                  , overall_stat.mean()
+                 , threshold
                  );
           fclose(f);
         }
@@ -471,8 +521,11 @@ int main(int argc, char* argv[])
         }
       }
 
-      // Once per day, append statistics to a CSV for future analysis      
-      if (localtime(&stats_csv_tm)->tm_mday != tmp->tm_mday) {
+      // Once per day, append statistics to a CSV for future analysis
+      int day_now = tmp->tm_mday;
+      tmp = localtime(&stats_csv_tm);
+      int day_then = tmp->tm_mday;      
+      if (day_now != day_then) {
         time(&stats_csv_tm); 
 
         // Create empty CSV if it does not yet exist
@@ -500,6 +553,8 @@ int main(int argc, char* argv[])
                    , stat.weekend[h].stdev()
                    );
           }
+        } else {
+          fprintf(stderr, "Can't open %s\n", stats_csv_filename);
         }
       }
       

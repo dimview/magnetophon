@@ -15,8 +15,9 @@ https://github.com/arvydas/blinkstick-client.
 ## Usage
 
 ```
-$ nohup [[rms] decay] >magnetophone.log 2>&1 &
+$ nohup [[[hours] rms] decay] >magnetophone.log 2>&1 &
 ```
+hours is average number of hours between notifications, default 168 (one week).
 
 rms is RMS threshold, default 1000. Audio samples are 16 bit signed integers. 
 
@@ -36,15 +37,16 @@ for weekdays and weekends (local time). This data is persisted in file magnetoph
 in current folder so that it survives magnetophon restart.
 
 magnetophon estimates expected mean and standard deviation of duty cycle by interpolating 
-hourly historical baseline. If duty cycle estimate is above expected mean plus three 
-expected standard deviations, a notification is triggered. Future notifications are 
-suppressed until duty cycle estimate falls below expected mean plus one expected 
-standard deviation.
+hourly historical baseline. If duty cycle estimate is above the threshold, a notification
+is triggered. Future notifications are suppressed until duty cycle estimate falls below 
+expected mean plus one expected standard deviation. Threshold is determined by number of 
+hours between notifications, estimated expected mean and standard deviation of duty cycle,
+and observed frequency of recordings since magnetophon start.
 
 If less than one hour worth of data is available for both ends of interpolation interval,
 overall mean and standard deviation are used instead, except during first hour when
 notifications are suppressed.
 
-magnetophon maintains CSV file magnetophon.csv in current folder. This file contains 
-one line per audio file with values of variables that went into decision whether to 
-trigger notification.
+magnetophon maintains two CSV files in current folder. magnetophon.csv contains one line
+per audio file with values of variables that went into decision whether to trigger 
+notification. magnetophon.stats.csv contains hourly historical baseline.
