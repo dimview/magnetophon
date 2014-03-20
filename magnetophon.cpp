@@ -553,6 +553,7 @@ int main(int argc, char* argv[])
                    , stat.weekend[h].stdev()
                    );
           }
+          fclose(f);
         } else {
           fprintf(stderr, "Can't open %s\n", stats_csv_filename);
         }
