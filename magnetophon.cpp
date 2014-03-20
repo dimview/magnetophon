@@ -227,14 +227,12 @@ int main(int argc, char* argv[])
   const char* buffer_filename  = "magnetophon.aif";
   const char* csv_filename  = "magnetophon.csv";
   const char* stats_csv_filename = "magnetophon.stats.csv";
-  time_t prev_tm;
-  time(&prev_tm);
-  time_t stats_csv_tm; 
-  time(&stats_csv_tm); 
+  time_t prev_tm;      time(&prev_tm);
+  time_t stats_csv_tm; time(&stats_csv_tm); 
+  time_t overall_tm;   time(&overall_tm); 
   bool triggered = false;
   int files_written_since_last_save = 0;
   RunningStat overall_stat;
-  int overall_events = 0;
   
   if (argc >= 2) {
     int a = atoi(argv[1]);
@@ -395,8 +393,6 @@ int main(int argc, char* argv[])
 
     // Collect statistics
     {
-      overall_events++;
-    
       // Determine the hourly bucket statistics should go to
       // tm_wday is days since Sunday (0...6)
       RunningStat* rspa = (tmp->tm_wday == 0 || tmp->tm_wday == 6 ? &stat.weekend[0] : &stat.weekday[0]);
@@ -410,15 +406,13 @@ int main(int argc, char* argv[])
       //printf("%s: %g, off %d, ", fileName, business, seconds_of_silence);
       for (int i = 0; i < seconds_of_silence; i++) {
         business -= business * decay;
-        rspa->push(business);
-        overall_stat.push(business);
       }
       //printf("%g, on %d, ", business, seconds_of_activity);
       for (int i = 0; i < seconds_of_activity; i++) {
         business += (1 - business) * decay;
-        rspa->push(business);
-        overall_stat.push(business);
       }
+      rspa->push(business);
+      overall_stat.push(business);
       //printf("%g\n", business);
       
       RunningStat* rspb; // Neighbor bucket for interpolation of thresholds
@@ -442,12 +436,12 @@ int main(int argc, char* argv[])
       }
       double weight_b = 1. - weight_a;
       double interpolated_mean, interpolated_stdev;
-      if (rspa->count() > 3600 && rspb->count() > 3600) { 
+      if (rspa->count() && rspb->count()) { 
         interpolated_mean = weight_a * rspa->mean() + weight_b * rspb->mean();
         //printf("interpolation: %g*%g+%g*%g=%g\n", weight_a, rspa->mean(), weight_b, rspb->mean(), interpolated_mean);
         interpolated_stdev = weight_a * rspa->stdev() + weight_b * rspb->stdev();
-      } else { // No reliable stats yet, use overall as fallback
-        if (overall_stat.count() > 3600) {
+      } else { // No reliable hourly stats yet, use overall as fallback
+        if (difftime(aqData.mRecordingStartTime, overall_tm) > 3600) {
           interpolated_mean = overall_stat.mean();
           interpolated_stdev = overall_stat.stdev();
         } else { // Less than an hour of overall data
@@ -460,13 +454,15 @@ int main(int argc, char* argv[])
       // business is at the highest, compare to thresholds
       double threshold = 1;
       if (!triggered) {
-        double hours = overall_stat.count() / 3600.;
-        double p = hours / (overall_events * hours_between_notifications);
+        time_t now_tm;
+        time(&now_tm); 
+        double hours = difftime(now_tm, overall_tm) / 3600.;
+        double p = hours / ((double)overall_stat.count() * hours_between_notifications);
         threshold = interpolated_mean + standard_normal_inverse_cdf(1 - p) * interpolated_stdev;
-//        printf( "hours=%g events=%d p=%g 1-p=%g invcdf=%g mean=%g stdev=%g threshold=%g\n"
-//              , hours, overall_events, p, 1-p, standard_normal_inverse_cdf(1 - p)
-//              , interpolated_mean, interpolated_stdev, threshold
-//              );
+        //printf( "hours=%g events=%d p=%g 1-p=%g invcdf=%g mean=%g stdev=%g threshold=%g\n"
+        //      , hours, overall_stat.count(), p, 1-p, standard_normal_inverse_cdf(1 - p)
+        //      , interpolated_mean, interpolated_stdev, threshold
+        //      );
         if (business > threshold) {
           triggered = true;
           if (system(NULL)) {

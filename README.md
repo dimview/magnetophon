@@ -1,7 +1,7 @@
 #magnetophon
 
 Magnetophon is command-line audio recorder for Mac OS X. Each time audio volume exceeds
-predefined threshold, magnetophon creates a new AIFF file in current folder. File name
+predefined RMS threshold, magnetophon creates a new AIFF file in current folder. File name
 reflects date and time when recording started, e.g., 2013-12-31 23.59.59.aiff.
 
 This can be useful for time shifting audio. For example, if a VHF radio is connected to
@@ -34,7 +34,8 @@ If average transmission lengths are much longer or much shorter, time constant
 Duty cycle estimate is updated once per second. To establish historical baseline, mean
 and standard deviation of duty cycle estimate are stored in hourly buckets, separately
 for weekdays and weekends (local time). This data is persisted in file magnetophon.stats
-in current folder so that it survives magnetophon restart.
+in current folder so that it survives magnetophon restart. Duty cycle measurements
+are taken at the end of each recording.
 
 magnetophon estimates expected mean and standard deviation of duty cycle by interpolating 
 hourly historical baseline. If duty cycle estimate is above the threshold, a notification
@@ -43,9 +44,9 @@ expected mean plus one expected standard deviation. Threshold is determined by n
 hours between notifications, estimated expected mean and standard deviation of duty cycle,
 and observed frequency of recordings since magnetophon start.
 
-If less than one hour worth of data is available for both ends of interpolation interval,
-overall mean and standard deviation are used instead, except during first hour when
-notifications are suppressed.
+If no data is available for either end of interpolation interval, overall mean and
+standard deviation are used instead, except during first hour when notifications are
+suppressed.
 
 magnetophon maintains two CSV files in current folder. magnetophon.csv contains one line
 per audio file with values of variables that went into decision whether to trigger 
