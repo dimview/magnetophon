@@ -17,32 +17,27 @@ https://github.com/arvydas/blinkstick-client.
 ```
 $ nohup [[[hours] rms] decay] >magnetophone.log 2>&1 &
 ```
-hours is average number of hours between notifications, default 168 (one week).
+hours is return period, or average number of hours between notifications, default 168 
+(one week).
 
-rms is RMS threshold, default 1000. Audio samples are 16 bit signed integers. 
+rms is RMS threshold, default 1000. Audio samples are 16 bit signed integers, so maximum
+possible RMS is 23165.
 
-decay is time constant used in exponential decay, default 600. 
+decay is time constant (in seconds) used in exponential smooting, default 600. 
 
 ## Notification Algorithm
 
-magnetophon maintains running estimate of duty cycle using exponential smoothing.
-Smoothing factor is by default set to 1/600 s<sup>-1</sup>, so it takes approximately
-half an hour of uninterrupted audio to bring duty cycle estimate from 0 to 0.95.
-If average transmission lengths are much longer or much shorter, time constant
-(reciprocal of smoothing factor) can be specified in command line.
+magnetophon maintains running estimate of file frequency (number of files generated per
+hour) using exponential smoothing. To establish historical baseline, mean and standard 
+deviation of previously observed file frequency are stored in hourly buckets, separately 
+for weekdays and weekends (local time).
 
-Duty cycle estimate is updated once per second. To establish historical baseline, mean
-and standard deviation of duty cycle estimate are stored in hourly buckets, separately
-for weekdays and weekends (local time). This data is persisted in file magnetophon.stats
-in current folder so that it survives magnetophon restart. Duty cycle measurements
-are taken at the end of each recording.
-
-magnetophon estimates expected mean and standard deviation of duty cycle by interpolating 
-hourly historical baseline. If duty cycle estimate is above the threshold, a notification
-is triggered. Future notifications are suppressed until duty cycle estimate falls below 
-expected mean plus one expected standard deviation. Threshold is determined by number of 
-hours between notifications, estimated expected mean and standard deviation of duty cycle,
-and observed frequency of recordings since magnetophon start.
+magnetophon estimates expected file frequency by interpolating hourly historical baseline.
+If file frequency is above the threshold, a notification is triggered. Future
+notifications are suppressed until file frequency estimate falls below expected mean plus 
+one expected standard deviation. Threshold is determined by return period (desired average 
+number of hours between notifications) as well as estimated mean and standard deviation of
+file frequency.
 
 If no data is available for either end of interpolation interval, overall mean and
 standard deviation are used instead, except during first hour when notifications are
@@ -50,4 +45,5 @@ suppressed.
 
 magnetophon maintains two CSV files in current folder. magnetophon.csv contains one line
 per audio file with values of variables that went into decision whether to trigger 
-notification. magnetophon.stats.csv contains hourly historical baseline.
+notification. This file is also read when magnetophon is started to restore historical
+baseline in memory. magnetophon.stats.csv contains hourly historical baseline.
