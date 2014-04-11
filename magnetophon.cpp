@@ -208,19 +208,22 @@ static void DeriveBufferSize (
   *outBufferSize = UInt32(numBytesForTime < maxBufferSize ? numBytesForTime : maxBufferSize);
 }
 
-static double exponential_decay(double business, double seconds, double decay)
+static double business_update(double business, int seconds_on, int seconds_off, double decay)
 {
-  if (seconds > 0) {
-    double transmissions_per_hour = 3600. / seconds;
-    double tail_weight = pow(1. - decay, seconds);
-    business = (1 - tail_weight) * transmissions_per_hour + tail_weight * business;
-  }
-  return business;
+  if (seconds_on < 0 || seconds_off < 0) return business;
+
+  double transmissions_per_hour = 3600. / (seconds_on + seconds_off + 1.); // "how often"
+  double duty_cycle = (seconds_on + 1.) / (seconds_on + seconds_off + 1.); // "for how long"
+  double activity = transmissions_per_hour * duty_cycle;   
+    
+  // Exponential decay
+  double tail_weight = pow(1. - decay, seconds_on + seconds_off);
+  return (1 - tail_weight) * activity + tail_weight * business;
 }
 
 int main(int argc, char* argv[])
 {
-  double business = 0; // Estimate of number of files per hour
+  double business = 0; // Activity metric
   int return_period = 24 * 7; // On average, one notification per week
   double decay = 1. / 600; // Exponential decay constant
   int rms_threshold = 1000;
@@ -281,7 +284,7 @@ int main(int argc, char* argv[])
           t->tm_year -= 1900;
           t->tm_mon -= 1;
           mktime(t); // t->tm_wday will be set
-          business = exponential_decay(business, seconds_on + seconds_off, decay);
+          business = business_update(business, seconds_on, seconds_off, decay);
           //printf( "%04d-%02d-%02d %02d.%02d.%02d,%d,%d,%s,%g\n"
           //      , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday
           //      , t->tm_hour, t->tm_min, t->tm_sec
@@ -426,7 +429,7 @@ int main(int argc, char* argv[])
     {
       int seconds_of_silence = (int)difftime(aqData.mRecordingStartTime, prev_tm);
       int seconds_of_activity = aqData.mRecordingLength;
-      business = exponential_decay(business, seconds_of_silence + seconds_of_activity, decay);
+      business = business_update(business, seconds_of_silence, seconds_of_activity, decay);
       RunningStat* rspa = stat.push(business, tmp->tm_wday, tmp->tm_hour);
       RunningStat* rspb; // Neighbor bucket for interpolation of thresholds
       double weight_a;
