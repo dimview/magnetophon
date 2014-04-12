@@ -27,21 +27,25 @@ decay is time constant (in seconds) used in exponential smooting, default 600.
 
 ## Notification Algorithm
 
-magnetophon maintains running estimate of file frequency (number of files generated per
-hour) using exponential smoothing. To establish historical baseline, mean and standard 
-deviation of previously observed file frequency are stored in hourly buckets, separately 
-for weekdays and weekends (local time).
+magnetophon maintains exponentially smoothed running estimate of activity. Activity is
+product of file frequency (number of files generated per hour) and duty cycle, both 
+calculated with Laplace smoothing.
 
-magnetophon estimates expected file frequency by interpolating hourly historical baseline.
-If file frequency is above the threshold, a notification is triggered. Future
-notifications are suppressed until file frequency estimate falls below expected mean plus 
-one expected standard deviation. Threshold is determined by return period (desired average 
-number of hours between notifications) as well as estimated mean and standard deviation of
-file frequency.
+To establish historical baseline, mean and standard deviation of previously observed 
+activity are stored in hourly buckets, separately for weekdays and weekends (local time).
+To remove high-frequency noise, before using historical baseline in comparison it is
+transformed to frequency domain with discrete Fourier transform, then frequencies
+up to and including third harmonic are converted back to time domain. This is done 
+separately for mean and standard deviation of activity.
 
-If no data is available for either end of interpolation interval, overall mean and
-standard deviation are used instead, except during first hour when notifications are
-suppressed.
+Threshold is determined by return period (desired average number of hours between 
+notifications) and expected mean and standard deviation of activity.
+
+If activity is above the threshold, a notification is triggered. Future notifications are
+suppressed until activity falls below expected mean plus one expected standard deviation. 
+
+If data is not available for all hourly buckets, overall mean and standard deviation are 
+used instead.
 
 magnetophon maintains two CSV files in current folder. magnetophon.csv contains one line
 per audio file with values of variables that went into decision whether to trigger 

@@ -213,7 +213,7 @@ static double business_update(double business, int seconds_on, int seconds_off, 
 
   double transmissions_per_hour = 3600. / (seconds_on + seconds_off + 1.); // "how often"
   double duty_cycle = (seconds_on + 1.) / (seconds_on + seconds_off + 1.); // "for how long"
-  double activity = transmissions_per_hour * duty_cycle;   
+  double activity = sqrt(sqrt(transmissions_per_hour)) * duty_cycle;   
     
   // Exponential decay
   double tail_weight = pow(1. - decay, seconds_on + seconds_off);
@@ -260,6 +260,8 @@ int main(int argc, char* argv[])
   }
   
   // Read and replay historical data
+  int history_seconds = 0; 
+  int history_events = 0;
   {
     FILE* f = fopen(csv_filename, "r");
     if (f) {
@@ -283,10 +285,12 @@ int main(int argc, char* argv[])
           t->tm_mon -= 1;
           mktime(t); // t->tm_wday will be set
           business = business_update(business, seconds_on, seconds_off, decay);
+          history_seconds += seconds_on + seconds_off;
+          history_events++;
           //printf( "%04d-%02d-%02d %02d.%02d.%02d,%d,%d,%s,%g\n"
           //      , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday
           //      , t->tm_hour, t->tm_min, t->tm_sec
-          //      , seconds_on, seconds_off, weekday[t->tm_wday]
+          //      , seconds_off, seconds_on, weekday[t->tm_wday]
           //      , business
           //      );
           stat.push(business, t->tm_wday, t->tm_hour);
@@ -427,7 +431,9 @@ int main(int argc, char* argv[])
     {
       int seconds_of_silence = (int)difftime(aqData.mRecordingStartTime, prev_tm);
       int seconds_of_activity = aqData.mRecordingLength;
-      business = business_update(business, seconds_of_silence, seconds_of_activity, decay);
+      business = business_update(business, seconds_of_activity, seconds_of_silence, decay);
+      history_seconds += seconds_of_silence + seconds_of_activity;
+      history_events++;
       RunningStat* rsp = stat.push(business, tmp->tm_wday, tmp->tm_hour);
       
       // To remove noise from hourly data convert it to frequency domain,
@@ -446,7 +452,7 @@ int main(int argc, char* argv[])
         frequency_domain_stdev[k] = 0;
         frequency_domain_stdev[k + 1] = 0;
         for (int h = 0; h < 24; h++) {
-          if (h == 0 && rsp[h].count()) hours_with_data++;
+          if (k == 0 && rsp[h].count()) hours_with_data++;
           double angle = M_PI * k * h / 24;
           double x = rsp[h].mean();
           frequency_domain_mean[k] += x * cos(angle);
@@ -456,7 +462,7 @@ int main(int argc, char* argv[])
           frequency_domain_stdev[k + 1] += x * sin(angle);
         }
       }
-      
+
       double interpolated_mean, interpolated_stdev;
       if (hours_with_data >= 24) {
         // Inverse slow Fourier transform
@@ -482,10 +488,11 @@ int main(int argc, char* argv[])
       
       double threshold = 10001;
       if (!triggered) {
-        double p = 1. / (stat.overall_.mean() * return_period);
+        double events_per_hour = 3600. * history_events / (history_seconds + 1.) ;
+        double p = 1. / (events_per_hour * return_period);
         threshold = interpolated_mean + standard_normal_inverse_cdf(1 - p) * interpolated_stdev;
         //printf( "events_per_hour=%g p=%g 1-p=%g invcdf=%g mean=%g stdev=%g threshold=%g\n"
-        //      , stat.overall_.mean(), p, 1-p, standard_normal_inverse_cdf(1 - p)
+        //      , events_per_hour, p, 1-p, standard_normal_inverse_cdf(1 - p)
         //      , interpolated_mean, interpolated_stdev, threshold
         //      );
         if (business > threshold) {
