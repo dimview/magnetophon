@@ -88,8 +88,7 @@ class BaselineBusinessCurve {
                      ) {
       overall_.push(x);
       RunningStat* rspa = (tm_wday == 0 || tm_wday == 6 ? &weekend_[0] : &weekday_[0]);
-      rspa += tm_hour;
-      rspa->push(x);
+      rspa[tm_hour].push(x);
       return rspa;
     }
 };
@@ -232,7 +231,6 @@ int main(int argc, char* argv[])
   const char* stats_csv_filename = "magnetophon.stats.csv";
   time_t prev_tm;      time(&prev_tm);
   time_t stats_csv_tm; time(&stats_csv_tm); 
-  time_t overall_tm;   time(&overall_tm); 
   bool triggered = false;
   BaselineBusinessCurve stat;
   
@@ -313,7 +311,7 @@ int main(int argc, char* argv[])
     } else {
       f = fopen(csv_filename, "w");
       if (f) {
-        fprintf(f, "datetime,seconds_off,seconds_on,business,interpolated_mean,interpolated_stdev,triggered,a_mean,b_mean,o_mean,threshold\n");
+        fprintf(f, "datetime,seconds_off,seconds_on,business,interpolated_mean,interpolated_stdev,threshold,triggered\n");
         fclose(f);
       }
     }
@@ -430,44 +428,59 @@ int main(int argc, char* argv[])
       int seconds_of_silence = (int)difftime(aqData.mRecordingStartTime, prev_tm);
       int seconds_of_activity = aqData.mRecordingLength;
       business = business_update(business, seconds_of_silence, seconds_of_activity, decay);
-      RunningStat* rspa = stat.push(business, tmp->tm_wday, tmp->tm_hour);
-      RunningStat* rspb; // Neighbor bucket for interpolation of thresholds
-      double weight_a;
-      if (tmp->tm_min >= 30) { // neighbor bucket is the next one
-        if (tmp->tm_hour == 23) { // wrap to next day
-          // tm_wday is days since Sunday (0...6) so Friday is 5 and Saturday is 6
-          rspb = (tmp->tm_wday == 5 || tmp->tm_wday == 6 ? &stat.weekend_[0] : &stat.weekday_[0]);
-        } else {
-          rspb = rspa + 1;
-        }
-        weight_a = (90. - tmp->tm_min) / 60;
-      } else { // neighbor bucket is the previous one
-        if (tmp->tm_hour == 0) { // wrap to previous day
-          // tm_wday is days since Sunday (0...6) so Sunday is 0 and Monday is 1
-          rspb = (tmp->tm_wday == 0 || tmp->tm_wday == 1 ? &stat.weekend_[23] : &stat.weekday_[23]);
-        } else {
-          rspb = rspa - 1;
-        }
-        weight_a = (31. + tmp->tm_min) / 60;
-      }
-      double weight_b = 1. - weight_a;
-      double interpolated_mean, interpolated_stdev;
-      if (rspa->count() && rspb->count()) { 
-        interpolated_mean = weight_a * rspa->mean() + weight_b * rspb->mean();
-        //printf("interpolation: %g*%g+%g*%g=%g\n", weight_a, rspa->mean(), weight_b, rspb->mean(), interpolated_mean);
-        interpolated_stdev = weight_a * rspa->stdev() + weight_b * rspb->stdev();
-      } else { // No reliable hourly stats yet, use overall as fallback
-        if (difftime(aqData.mRecordingStartTime, overall_tm) > 3600) {
-          interpolated_mean = stat.overall_.mean();
-          interpolated_stdev = stat.overall_.stdev();
-        } else { // Less than an hour of overall data
-          // Set artificially high expectation to suppress notifications
-          interpolated_mean = 1001;
-          interpolated_stdev = 1001;
+      RunningStat* rsp = stat.push(business, tmp->tm_wday, tmp->tm_hour);
+      
+      // To remove noise from hourly data convert it to frequency domain,
+      // drop higher frequencies, then convert back to time domain.
+      // This also solves the interpolation problem.
+      
+      // Slow Fourier transform. No need for FFT because we only have 24 data points
+      // and only need lowest harmonics
+      const int FDD_SIZE = 8; // DC + first 3 harmonics, two numbers each (1 real, 1 imaginary)
+      double frequency_domain_mean[FDD_SIZE];
+      double frequency_domain_stdev[FDD_SIZE];
+      int hours_with_data = 0;
+      for (int k = 0; k < FDD_SIZE; k += 2) {
+        frequency_domain_mean[k] = 0;
+        frequency_domain_mean[k + 1] = 0;
+        frequency_domain_stdev[k] = 0;
+        frequency_domain_stdev[k + 1] = 0;
+        for (int h = 0; h < 24; h++) {
+          if (h == 0 && rsp[h].count()) hours_with_data++;
+          double angle = M_PI * k * h / 24;
+          double x = rsp[h].mean();
+          frequency_domain_mean[k] += x * cos(angle);
+          frequency_domain_mean[k + 1] += x * sin(angle);
+          x = rsp[h].stdev();
+          frequency_domain_stdev[k] += x * cos(angle);
+          frequency_domain_stdev[k + 1] += x * sin(angle);
         }
       }
       
-      double threshold = 1001;
+      double interpolated_mean, interpolated_stdev;
+      if (hours_with_data >= 24) {
+        // Inverse slow Fourier transform
+        interpolated_mean = 0;
+        interpolated_stdev = 0;
+        for (int k = 0; k < FDD_SIZE; k += 2) {
+          double angle = M_PI * k * ((tmp->tm_sec / 60. + tmp->tm_min) / 60. + tmp->tm_hour) / 24;
+          interpolated_mean += (k > 1 ? 2 : 1)
+                             * ( frequency_domain_mean[k]     * cos(angle)
+                               + frequency_domain_mean[k + 1] * sin(angle)
+                               );
+          interpolated_stdev += (k > 1 ? 2 : 1)
+                              * ( frequency_domain_stdev[k]     * cos(angle)
+                                + frequency_domain_stdev[k + 1] * sin(angle)
+                                );
+        }
+        interpolated_mean /= 24;
+        interpolated_stdev /= 24;
+      } else {
+        interpolated_mean = stat.overall_.mean();
+        interpolated_stdev = stat.overall_.stdev();
+      }
+      
+      double threshold = 10001;
       if (!triggered) {
         double p = 1. / (stat.overall_.mean() * return_period);
         threshold = interpolated_mean + standard_normal_inverse_cdf(1 - p) * interpolated_stdev;
@@ -499,15 +512,12 @@ int main(int argc, char* argv[])
       {
         FILE* f = fopen(csv_filename, "a");
         if (f) {
-          fprintf( f, "%s,%d,%d,%g,%g,%g,%d,%g,%g,%g,%g\n"
+          fprintf( f, "%s,%d,%d,%g,%g,%g,%g,%d\n"
                  , fileName, seconds_of_silence, seconds_of_activity
                  , business
                  , interpolated_mean, interpolated_stdev
-                 , triggered ? 1 : 0
-                 , rspa->mean()
-                 , rspb->mean()
-                 , stat.overall_.mean()
                  , threshold
+                 , triggered ? 1 : 0
                  );
           fclose(f);
         }
