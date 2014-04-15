@@ -210,10 +210,9 @@ static void DeriveBufferSize (
 static double business_update(double business, int seconds_on, int seconds_off, double decay)
 {
   if (seconds_on < 0 || seconds_off < 0) return business;
-
-  double transmissions_per_hour = 3600. / (seconds_on + seconds_off + 1.); // "how often"
-  double duty_cycle = (seconds_on + 1.) / (seconds_on + seconds_off + 1.); // "for how long"
-  double activity = sqrt(sqrt(transmissions_per_hour)) * duty_cycle;   
+  
+  // Empirical metric, emphasizes that beginning of transmission carries more data
+  double activity = sqrt(sqrt(seconds_on));
     
   // Exponential decay
   double tail_weight = pow(1. - decay, seconds_on + seconds_off);
