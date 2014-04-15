@@ -27,8 +27,8 @@ decay is time constant (in seconds) used in exponential smooting, default 600.
 
 ## Notification Algorithm
 
-magnetophon maintains exponentially smoothed running estimate of activity. Activity is
-square root of square root of last audio file duration in seconds.
+magnetophon maintains running estimate of activity: exponentially smoothed square root of 
+last audio file duration in seconds.
 
 To establish historical baseline, mean and standard deviation of previously observed 
 activity are stored in hourly buckets, separately for weekdays and weekends (local time).
@@ -41,8 +41,7 @@ Threshold is determined by return period (desired average number of hours betwee
 notifications) and expected mean and standard deviation of activity.
 
 If activity is above the threshold, a notification is triggered. Future notifications are
-suppressed until smoothed activity falls below expected mean plus one expected standard
-deviation. 
+suppressed until activity falls below expected mean plus one expected standard deviation. 
 
 If data is not available for all hourly buckets, overall mean and standard deviation are 
 used instead.

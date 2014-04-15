@@ -210,13 +210,8 @@ static void DeriveBufferSize (
 static double business_update(double business, int seconds_on, int seconds_off, double decay)
 {
   if (seconds_on < 0 || seconds_off < 0) return business;
-  
-  // Empirical metric, emphasizes that beginning of transmission carries more data
-  double activity = sqrt(sqrt(seconds_on));
-    
-  // Exponential decay
-  double tail_weight = pow(1. - decay, seconds_on + seconds_off);
-  return (1 - tail_weight) * activity + tail_weight * business;
+  return sqrt(seconds_on) // emphasizes that beginning of transmission carries more data
+       + pow(1. - decay, seconds_off) * business; // exponential decay
 }
 
 int main(int argc, char* argv[])
