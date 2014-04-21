@@ -28,7 +28,7 @@ decay is time constant (in seconds) used in exponential smooting, default 600.
 ## Notification Algorithm
 
 magnetophon maintains running estimate of activity: exponentially smoothed square root of 
-last audio file duration in seconds.
+square root of last audio file duration in seconds.
 
 To establish historical baseline, mean and standard deviation of previously observed 
 activity are stored in hourly buckets, separately for weekdays and weekends (local time).
